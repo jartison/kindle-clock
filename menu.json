@@ -1,0 +1,11 @@
+{
+    "items": [
+        {
+            "name": "Kindle Clock",
+            "action": "sh /mnt/us/extensions/kindle-clock/main.sh > /mnt/us/extensions/kindle-clock/kindle-clock.log 2>&1",
+            "params": "",
+            "exitmenu": true,
+            "refresh": false
+        }
+    ]
+}

@@ -1,0 +1,2 @@
+en=en
+zh-Hans=zh-cn
