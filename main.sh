@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ==========================================
-# Kindle Clock - Prototype v0.1
+# Kindle Clock - Prototype v0.1.1
 # Kindle 7 / WP63GW
 # ==========================================
 
@@ -40,35 +40,6 @@ error() {
 
 critical() {
     log CRITICAL "$@"
-}
-
-parse_arg() {
-    local name
-    local default_value
-    local value
-
-    name="$1"
-    default_value="$2"
-    shift 2
-
-    value="$default_value"
-
-    while [ "$#" -gt 0 ]; do
-        if [ "$1" = "$name" ]; then
-            if [ "$#" -lt 2 ]; then
-                error "Missing value for argument: $name"
-                return 1
-            fi
-
-            value="$2"
-            break
-        fi
-
-        shift
-    done
-
-    printf '%s\n' "$value"
-    return 0
 }
 
 get_screen_size() {
@@ -135,90 +106,28 @@ get_wttr_language() {
     ' "$wttr_languages_file"
 }
 
-get_screensaver_state() {
-    local prop
-
-    if ! prop=$(lipc-get-prop com.lab126.powerd preventScreenSaver); then
-        error "Failed to get prop: preventScreenSaver."
-        return 1
-    fi
-
-    if [ "$prop" = "0" ]; then
-        printf '%s\n' "1"
-    elif [ "$prop" = "1" ]; then
-        printf '%s\n' "0"
-    else
-        error "Invalid prop value: prevetScreenSaver=$prop."
-        return 1
-    fi
-
-    return 0
+get_prevent_screensaver() {
+    lipc-get-prop com.lab126.powerd preventScreenSaver
 }
 
-set_screensaver_state() {
-    local state
-    local prop
-
-    state="$1"
-
-    if [ "$state" = "0" ]; then
-        prop="1"
-    elif [ "$state" = "1" ]; then
-        prop="0"
-    else
-        error "Invalid state value: screensaver_state=$state"
-        return 1
-    fi
-
-    if ! lipc-set-prop com.lab126.powerd preventScreenSaver "$prop"; then
-        error "Failed to set prop: preventScreenSaver=$prop"
-        return 1
-    fi
-
-    return 0
+set_prevent_screensaver() {
+    lipc-set-prop com.lab126.powerd preventScreenSaver "$1"
 }
 
-get_wireless_state() {
-    local prop
-
-    if ! prop=$(lipc-get-prop com.lab126.cmd wirelessEnable); then
-        error "Failed to get prop: wirelessEnable."
-        return 1
-    fi
-
-    if [ "$prop" = "0" ]; then
-        printf '%s\n' "0"
-    elif [ "$prop" = "1" ]; then
-        printf '%s\n' "1"
-    else
-        error "Invalid prop value: wirelessEnable=$prop."
-        return 1
-    fi
-
-    return 0
+get_wireless_enable() {
+    lipc-get-prop com.lab126.cmd wirelessEnable
 }
 
-set_wireless_state() {
-    local state
-    local prop
+set_wireless_enable() {
+    lipc-set-prop com.lab126.cmd wirelessEnable "$1"
+}
 
-    state="$1"
+get_battery_level() {
+    lipc-get-prop com.lab126.powerd battLevel
+}
 
-    if [ "$state" = "0" ]; then
-        prop="0"
-    elif [ "$state" = "1" ]; then
-        prop="1"
-    else
-        error "Invalid state value: wireless_state=$state."
-        return 1
-    fi
-
-    if ! lipc-set-prop com.lab126.cmd wirelessEnable "$prop"; then
-        error "Failed to set prop: wirelessEnable=$prop."
-        return 1
-    fi
-
-    return 0
+get_is_charging() {
+    lipc-get-prop com.lab126.powerd isCharging
 }
 
 update_time() {
@@ -332,8 +241,8 @@ run_network_tasks() {
             WEATHER_UPDATE_AT="$current"
         fi
 
-        if ! set_wireless_state "1"; then
-            error "Failed to set wireless state: 1"
+        if ! set_wireless_enable "1"; then
+            error "Failed to set wireless enable: 1"
             return 1
         fi
 
@@ -363,8 +272,8 @@ run_network_tasks() {
         fi
 
         if [ "$KEEP_WIRELESS_ENABLED" -ne 1 ]; then
-            if ! set_wireless_state "0"; then
-                warning "Failed to set wireless state: 0"
+            if ! set_wireless_enable "0"; then
+                warning "Failed to set wireless enable: 0"
             fi
         fi
 
@@ -433,44 +342,93 @@ before_draw() {
 }
 
 draw() {
+    local is_charging
+    local battery_level
+    local battery_image
     local hour
     local minute
     local weekday
     local day
     local info
+    local status_size
+    local time_size
+    local info_size
+    local status_image_size_max
+    local status_image_size
+    local status_font_size_max
+    local status_font_size
     local time_font_size_max
     local time_font_size
     local info_font_size_max
     local info_font_size
-    local hour_top
-    local minute_top
-    local info_top
+
+    if ! is_charging=$(get_is_charging); then
+        warning "Failed to get is_charging."
+        is_charging=""
+    fi
+
+    if ! battery_level=$(get_battery_level); then
+        warning "Failed to get battery level."
+        battery_level=""
+    fi
 
     set -- $(TZ="$TIMEZONE" date '+%H %M %w %-d')
-
     hour=$1
     minute=$2
-    weekday=$(translate $(to_weekday_key "$3"))
+    weekday=$3
     day=$4
-    info="$weekday $day $WEATHER"
 
-    debug "hour=$hour, minute=$minute, info=$info"
+    debug "is_charging=$is_charging, bettery_level=$battery_level, hour=$hour, minute=$minute, weekday=$weekday, day=$day, weather=$WEATHER"
 
-    time_font_size_max=$((SCREEN_WIDTH < SCREEN_HEIGHT / 2 ? SCREEN_WIDTH : SCREEN_HEIGHT / 2))
-    time_font_size=$((time_font_size_max * TIME_FONT_SCALE / 100))
+    battery_image="$BATTERY_IMAGE_UNKNOWN"
+
+    if [ "$is_charging" = "1" ]; then
+        battery_image="$BATTERY_IMAGE_CHARGING"
+    elif [ "$is_charging" = "0" ]; then
+        if [ -n "$battery_level" ]; then
+            if [ "$battery_level" -le 10 ]; then
+                battery_image="$BATTERY_IMAGE_WARNING"
+            elif [ "$battery_level" -le 33 ]; then
+                battery_image="$BATTERY_IMAGE_LOW"
+            elif [ "$battery_level" -le 66 ]; then
+                battery_image="$BATTERY_IMAGE_MEDIUM"
+            else
+                battery_image="$BATTERY_IMAGE_FULL"
+            fi
+        fi
+    fi
+
+    info="$(translate "$(to_weekday_key "$weekday")") $day"
+
+    if [ "$ENABLE_WEATHER" = "1" ]; then
+        info="$info ${WEATHER:---}"
+    fi
+
+    status_size=$((SCREEN_HEIGHT * STATUS_SIZE_FACTOR / (STATUS_SIZE_FACTOR + 2 * TIME_SIZE_FACTOR + INFO_SIZE_FACTOR)))
+    time_size=$((SCREEN_HEIGHT * TIME_SIZE_FACTOR / (STATUS_SIZE_FACTOR + 2 * TIME_SIZE_FACTOR + INFO_SIZE_FACTOR)))
+    info_size=$((SCREEN_HEIGHT * INFO_SIZE_FACTOR / (STATUS_SIZE_FACTOR + 2 * TIME_SIZE_FACTOR + INFO_SIZE_FACTOR)))
+
+    # debug "status_size=$status_size, time_size=$time_size, info_size=$info_size"
+
+    status_image_size_max="$status_size"
+    status_image_size=$((status_image_size_max * STATUS_IMAGE_SIZE_SCALE / 100))
+
+    # debug "status_image_size_max=$status_image_size_max, status_image_size=$status_image_size"
+
+    status_font_size_max="$status_size"
+    status_font_size=$((status_font_size_max * STATUS_FONT_SIZE_SCALE / 100))
+
+    # debug "status_font_size_max=$status_font_size_max, status_font_size=$status_font_size"
+
+    time_font_size_max="$time_size"
+    time_font_size=$((time_font_size_max * TIME_FONT_SIZE_SCALE / 100))
 
     # debug "time_font_size_max=$time_font_size_max, time_font_size=$time_font_size"
 
-    info_font_size_max=$((SCREEN_WIDTH < SCREEN_HEIGHT / 20 ? SCREEN_WIDTH : SCREEN_HEIGHT / 20))
-    info_font_size=$((info_font_size_max * INFO_FONT_SCALE / 100))
+    info_font_size_max="$info_size"
+    info_font_size=$((info_font_size_max * INFO_FONT_SIZE_SCALE / 100))
 
     # debug "info_font_size_max=$info_font_size_max, info_font_size=$info_font_size"
-
-    hour_top=$(((SCREEN_HEIGHT / 2 - time_font_size_max) * 2 / 3 + (time_font_size_max - time_font_size) / 2))
-    minute_top=$((SCREEN_HEIGHT / 2 + (SCREEN_HEIGHT / 2 - time_font_size_max) / 3 + (time_font_size_max - time_font_size) / 2))
-    info_top=$((SCREEN_HEIGHT - info_font_size_max + (info_font_size_max - info_font_size) / 2))
-
-    # debug "hour_top=$hour_top, minute_top=$minute_top, info_top=$info_top"
 
     if ! fbink -b -c; then
         error "Failed to clear framebuffer."
@@ -478,22 +436,39 @@ draw() {
     fi
 
     if ! fbink -b \
-        -t "regular=$TIME_FONT,px=$time_font_size,top=$hour_top,left=0,right=0" \
-        -m "$hour"; then
-        error "Failed to draw hour."
+        -g "file=$battery_image,x=$(((status_font_size_max - status_image_size) / 2)),y=$(((status_font_size_max - status_image_size) / 2)),w=$status_image_size,h=$status_image_size" ; then
+        error "Failed to draw battery icon."
         return 1
     fi
 
     if ! fbink -b \
-        -t "regular=$TIME_FONT,px=$time_font_size,top=$minute_top,left=0,right=0" \
-        -m "$minute"; then
+        -t "regular=$STATUS_FONT,px=$status_font_size,bottom=$((SCREEN_HEIGHT - status_font_size_max)),left=$status_font_size_max" \
+        -M "${battery_level:---}%"; then
+        error "Failed to draw battery level."
+        return 1
+    fi
+
+    # debug "Hour: top=$status_font_size_max, bottom=$((SCREE_HEIGHT- (status_font_size_max + time_font_size_max * 2 * TIME_LAYOUT_DENSITY / 100 + time_font_size * (100 - 2 * TIME_LAYOUT_DENSITY) / 100)))"
+
+    if ! fbink -b \
+        -t "regular=$TIME_FONT,px=$time_font_size,top=$status_font_size_max,bottom=$((SCREEN_HEIGHT - (status_font_size_max + time_font_size_max * 2 * TIME_LAYOUT_DENSITY / 100 + time_font_size * (100 - 2 * TIME_LAYOUT_DENSITY) / 100)))" \
+        -mM "$hour"; then
+        error "Failed to draw hour."
+        return 1
+    fi
+
+    # debug "Minute: top=$((SCREEN_HEIGHT - (info_font_size_max + time_font_size_max * 2 * TIME_LAYOUT_DENSITY / 100 + time_font_size * (100 - 2 * TIME_LAYOUT_DENSITY) / 100))), bottom=$info_font_size_max"
+
+    if ! fbink -b \
+        -t "regular=$TIME_FONT,px=$time_font_size,top=$((SCREEN_HEIGHT - (info_font_size_max + time_font_size_max * 2 * TIME_LAYOUT_DENSITY / 100 + time_font_size * (100 - 2 * TIME_LAYOUT_DENSITY) / 100))),bottom=$info_font_size_max" \
+        -mM "$minute"; then
         error "Failed to draw minute."
         return 1
     fi
 
     if ! fbink -b \
-        -t "regular=$INFO_FONT,px=$info_font_size,top=$info_top,left=0,right=0" \
-        -m "$info"; then
+        -t "regular=$INFO_FONT,px=$info_font_size,top=$((SCREEN_SIZE - info_font_size_max))" \
+        -mM "$info"; then
         error "Failed to draw info."
         return 1
     fi
@@ -598,115 +573,328 @@ run() {
     return 0
 }
 
+parse_arg() {
+    local name
+    local default_value
+    local value
+
+    name="$1"
+    default_value="$2"
+    shift 2
+
+    value="$default_value"
+
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "$name" ]; then
+            if [ "$#" -lt 2 ]; then
+                error "Missing value for argument: $name"
+                return 1
+            fi
+
+            value="$2"
+            break
+        fi
+
+        shift
+    done
+
+    printf '%s\n' "$value"
+    return 0
+}
+
+parse_args() {
+    if ! VERBOSE=$(parse_arg "--verbose" "0" "$@"); then
+        error "Failed to parse arg: --verbose."
+        VERBOSE=""
+        return 1
+    fi
+
+    if ! DELAY=$(parse_arg "--delay" "0" "$@"); then
+        error "Failed to parse arg: --delay."
+        DELAY=""
+        return 1
+    fi
+
+    if ! LANGUAGE=$(parse_arg "--language" "en" "$@"); then
+        error "Failed to parse arg: --language."
+        LANGUAGE=""
+        return 1
+    fi
+
+    if ! MAX_CYCLES=$(parse_arg "--max-cycles" "-1" "$@"); then
+        error "Failed to parse arg: --max-cycles."
+        MAX_CYCLES=""
+        return 1
+    fi
+
+    if ! SUSPEND_SECONDS=$(parse_arg "--suspend-seconds" "60" "$@"); then
+        error "Failed to parse arg: --suspend-seconds."
+        SUSPEND_SECONDS=""
+        return 1
+    fi
+
+    if ! RESUME_TOLERANCE=$(parse_arg "--resume-tolerance" "1" "$@"); then
+        error "Failed to parse arg: --resume-tolerance."
+        RESUME_TOLERANCE=""
+        return 1
+    fi
+
+    if ! SCREEN_FLASH_INTERVAL=$(parse_arg "--screen-flash-interval" "30" "$@"); then
+        error "Failed to parse arg: --screen-flash-interval."
+        SCREEN_FLASH_INTERVAL=""
+        return 1
+    fi
+
+    if ! TIMEZONE=$(parse_arg "--timezone" "UTC-0" "$@"); then
+        error "Failed to parse arg: --timezone."
+        TIMEZONE=""
+        return 1
+    fi
+
+    if ! STATUS_FONT=$(parse_arg "--status-font" "$KINDLE_CLOCK_HOME/fonts/Inter_24pt-Regular.ttf" "$@"); then
+        error "Failed to parse arg: --status-font."
+        STATUS_FONT=""
+        return 1
+    fi
+
+    if ! TIME_FONT=$(parse_arg "--time-font" "$KINDLE_CLOCK_HOME/fonts/digital-7 (mono).ttf" "$@"); then
+        error "Failed to parse arg: --time-font."
+        TIME_FONT=""
+        return 1
+    fi
+
+    if ! INFO_FONT=$(parse_arg "--info-font" "$KINDLE_CLOCK_HOME/fonts/NotoSans-Regular.ttf" "$@"); then
+        error "Failed to parse arg: --info-font."
+        INFO_FONT=""
+        return 1
+    fi
+
+    if ! STATUS_SIZE_FACTOR=$(parse_arg "--status-size-factor" "1" "$@"); then
+        error "Failed to parse arg: --status-size-factor."
+        STATUS_SIZE_FACTOR=""
+        return 1
+    fi
+
+    if ! TIME_SIZE_FACTOR=$(parse_arg "--time-size-factor" "9" "$@"); then
+        error "Failed to parse arg: --time-size-factor."
+        TIME_SIZE_FACTOR=""
+        return 1
+    fi
+
+    if ! INFO_SIZE_FACTOR=$(parse_arg "--info-size-factor" "1" "$@"); then
+        error "Failed to parse arg: --info-size-factor."
+        INFO_SIZE_FACTOR=""
+        return 1
+    fi
+
+    if ! TIME_LAYOUT_DENSITY=$(parse_arg "--time-layout-density" "66" "$@"); then
+        error "Failed to parse arg: --time-layout-density."
+        TIME_LAYOUT_DENSITY=""
+        return 1
+    fi
+
+    if ! STATUS_IMAGE_SIZE_SCALE=$(parse_arg "--status-image-size-scale" "75" "$@"); then
+        error "Failed to parse arg: --status-image-size-scale."
+        STATUS_IMAGE_SIZE_SCALE=""
+        return 1
+    fi
+
+    if ! STATUS_FONT_SIZE_SCALE=$(parse_arg "--status-font-size-scale" "60" "$@"); then
+        error "Failed to parse arg: --status-font-size-scale."
+        STATUS_FONT_SIZE_SCALE=""
+        return 1
+    fi
+
+    if ! TIME_FONT_SIZE_SCALE=$(parse_arg "--time-font-size-scale" "90" "$@"); then
+        error "Failed to parse arg: --time-font-size-scale."
+        TIME_FONT_SIZE_SCALE=""
+        return 1
+    fi
+
+    if ! INFO_FONT_SIZE_SCALE=$(parse_arg "--info-font-size-scale" "90" "$@"); then
+        error "Failed to parse arg: --info-font-size-scale."
+        INFO_FONT_SIZE_SCALE=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_UNKNOWN=$(parse_arg "--battery-image-unknown" "$KINDLE_CLOCK_HOME/images/battery-unknown.png" "$@"); then
+        error "Failed to parse arg: --battery-image-unknown."
+        BATTERY_IMAGE_UNKNOWN=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_CHARGING=$(parse_arg "--battery-image-charging" "$KINDLE_CLOCK_HOME/images/battery-charging.png" "$@"); then
+        error "Failed to parse arg: --battery-image-charging."
+        BATTERY_IMAGE_CHARGING=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_FULL=$(parse_arg "--battery-image-full" "$KINDLE_CLOCK_HOME/images/battery-full.png" "$@"); then
+        error "Failed to parse arg: --battery-image-full."
+        BATTERY_IMAGE_FULL=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_MEDIUM=$(parse_arg "--battery-image-medium" "$KINDLE_CLOCK_HOME/images/battery-medium.png" "$@"); then
+        error "Failed to parse arg: --battery-image-medium."
+        BATTERY_IMAGE_MEDIUM=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_LOW=$(parse_arg "--battery-image-low" "$KINDLE_CLOCK_HOME/images/battery-low.png" "$@"); then
+        error "Failed to parse arg: --battery-image-low."
+        BATTERY_IMAGE_LOW=""
+        return 1
+    fi
+
+    if ! BATTERY_IMAGE_WARNING=$(parse_arg "--battery-image-warning" "$KINDLE_CLOCK_HOME/images/battery-warning.png" "$@"); then
+        error "Failed to parse arg: --battery-image-warning."
+        BATTERY_IMAGE_WARNING=""
+        return 1
+    fi
+
+    if ! KEEP_WIRELESS_ENABLED=$(parse_arg "--keep-wireless-enabled" "1" "$@"); then
+        error "Failed to parse arg: --keep-wireless-enabled."
+        KEEP_WIRELESS_ENABLED=""
+        return 1
+    fi
+
+    if ! WIRELESS_CONNECT_TIMEOUT=$(parse_arg "--wireless-connect-timeout" "30" "$@"); then
+        error "Failed to parse arg: --wireless-connect-timeout."
+        WIRELESS_CONNECT_TIMEOUT=""
+        return 1
+    fi
+
+    if ! WIRELESS_RECONNECT_COUNT=$(parse_arg "--wireless-reconnect-count" "2" "$@"); then
+        error "Failed to parse arg: --wireless-reconnect-count."
+        WIRELESS_RECONNECT_COUNT=""
+        return 1
+    fi
+
+    if ! ENABLE_TIME_UPDATE=$(parse_arg "--enable-time-update" "1" "$@"); then
+        error "Failed to parse arg: --enable-time-update."
+        ENABLE_TIME_UPDATE=""
+        return 1
+    fi
+
+    if ! TIME_UPDATE_INTERVAL=$(parse_arg "--time-update-interval" "86400" "$@"); then
+        error "Failed to parse arg: --time-update-interval."
+        TIME_UPDATE_INTERVAL=""
+        return 1
+    fi
+
+    if ! NTP_SERVER=$(parse_arg "--ntp-server" "pool.ntp.org" "$@"); then
+        error "Failed to parse arg: --ntp-server."
+        NTP_SERVER=""
+        return 1
+    fi
+
+    if ! ENABLE_WEATHER=$(parse_arg "--enable-weather-update" "1" "$@"); then
+        error "Failed to parse arg: --enable-weather-update."
+        ENABLE_WEATHER=""
+        return 1
+    fi
+
+    if ! WEATHER_UPDATE_INTERVAL=$(parse_arg "--weather-update-interval" "3600" "$@"); then
+        error "Failed to parse arg: --weather-update-interval."
+        WEATHER_UPDATE_INTERVAL=""
+        return 1
+    fi
+
+    if ! WEATHER_UPDATE_TIMEOUT=$(parse_arg "--weather-update-timeout" "30" "$@"); then
+        error "Failed to parse arg: --weather-update-timeout."
+        WEATHER_UPDATE_TIMEOUT=""
+        return 1
+    fi
+
+    if ! WEATHER_LOCATION=$(parse_arg "--weather-location" "" "$@"); then
+        error "Failed to parse arg: --weather-location."
+        WEATHER_LOCATION=""
+        return 1
+    fi
+}
+
 setup() {
-    local translations
-    local weather_language
-    local rtc_wakealarm
-    local screensaver_state
-    local wireless_state
-
-    if ! translations=$(get_translations); then
+    if ! TRANSLATIONS=$(get_translations); then
         error "Failed to get translations."
+        TRANSLATIONS=""
         return 1
     fi
-    TRANSLATIONS="$translations"
 
-    if ! weather_language=$(get_wttr_language); then
+    if ! WEATHER_LANGUAGE=$(get_wttr_language); then
         error "Failed to get WTTR language."
+        WEATHER_LANGUAGE=""
         return 1
     fi
-    debug "Weather language: $weather_language"
-    WEATHER_LANGUAGE="$weather_language"
+    debug "Weather language: $WEATHER_LANGUAGE"
 
     if ! set -- $(get_screen_size); then
         error "Failed to get screen size."
+        SCREEN_WIDTH=""
+        SCREEN_HEIGHT=""
         return 1
     fi
-    debug "Screen size: $2 * $1"
     SCREEN_WIDTH="$1"
     SCREEN_HEIGHT="$2"
+    debug "Screen size: $SCREEN_HEIGHT * $SCREEN_WIDTH"
 
-    if ! rtc_wakealarm=$(get_rtc_wakealarm); then
+    if ! RTC_WAKEALARM=$(get_rtc_wakealarm); then
         error "Failed to get RTC wakealarm."
+        RTC_WAKEALARM=""
         return 1
     fi 
+    debug "RTC wakealarm: $RTC_WAKEALARM"
 
-    debug "RTC wakealarm: $rtc_wakealarm"
-    RTC_WAKEALARM="$rtc_wakealarm"
-
-    # Save screensaver state
-    if ! screensaver_state=$(get_screensaver_state); then
-        error "Failed to get screensaver state."
+    # Save prevent screensaver
+    if ! PREVENT_SCREENSAVER=$(get_prevent_screensaver); then
+        error "Failed to get prevent screensaver."
+        PREVENT_SCREENSAVER=""
         return 1
     fi
-    debug "Screensaver state: $screensaver_state"
-    SCREENSAVER_STATE="$screensaver_state"
+    debug "Prevent screensaver: $PREVENT_SCREENSAVER"
 
-    if ! set_screensaver_state "0"; then
-        error "Failed to set screensaver state: 0"
+    if ! set_prevent_screensaver "1"; then
+        error "Failed to set prevent screensaver: 1"
         return 1
     fi
 
-    # Save wireless state
-    if ! wireless_state=$(get_wireless_state); then
-        error "Failed to get wireless state"
+    # Save wireless enable
+    if ! WIRELESS_ENABLE=$(get_wireless_enable); then
+        error "Failed to get wireless enable"
+        WIRELESS_ENABLE=""
         return 1
     fi
-    debug "Wireless state: $wireless_state"
-    WIRELESS_STATE="$wireless_state"
+    debug "Wireless enable: $wireless_enable"
 
     TIME_UPDATE_AT=0
 
     WEATHER_UPDATE_AT=0
-    WEATHER="--"
+    WEATHER=""
 
     return 0
 }
 
 on_exit() {
-    # Restore screenersaver state
-    if [ -n "$SCREENSAVER_STATE" ]; then
-        if ! set_screensaver_state "$SCREENSAVER_STATE"; then
-            warning "Failed to set screen state: $SCREENSAVER_STATE."
+    # Restore prevent screenersaver
+    if [ -n "$PREVENT_SCREENSAVER" ]; then
+        if ! set_prevent_screensaver "$PREVENT_SCREENSAVER"; then
+            warning "Failed to set prevent screensaver: $PREVENT_SCREENSAVER."
         fi
     fi
 
-    # Reset wireless state
-    if [ -n "$WIRELESS_STATE" ]; then
-        if ! set_wireless_state "$WIRELESS_STATE"; then
-            warning "Failed to set wireless state: $WIRELESS_STATE."
+    # Retore wireless enable
+    if [ -n "$WIRELESS_ENABLE" ]; then
+        if ! set_wireless_enable "$WIRELESS_ENABLE"; then
+            warning "Failed to set wireless enable: $WIRELESS_ENABLE."
         fi
     fi
 }
 
 main () {
-    VERBOSE=$(parse_arg "--verbose" "0" "$@") || return 1
-    DELAY=$(parse_arg "--delay" "0" "$@") || return 1
-    LANGUAGE=$(parse_arg "--language" "en" "$@") || return 1
-
-    MAX_CYCLES=$(parse_arg "--max-cycles" "-1" "$@") || return 1
-    SUSPEND_SECONDS=$(parse_arg "--suspend-seconds" "60" "$@") || return 1
-    RESUME_TOLERANCE=$(parse_arg "--resume-tolerance" "1" "$@") || return 1
-    SCREEN_FLASH_INTERVAL=$(parse_arg "--screen-flash-interval" "30" "$@") || return 1
-
-    TIMEZONE=$(parse_arg "--timezone" "UTC-0" "$@") || return 1
-    TIME_FONT=$(parse_arg "--time-font" "$KINDLE_CLOCK_HOME/fonts/digital-7 (mono).ttf" "$@") || return 1
-    TIME_FONT_SCALE=$(parse_arg "--time-font-scale" "90" "$@") || return 1
-    INFO_FONT=$(parse_arg "--info-font" "$KINDLE_CLOCK_HOME/fonts/unifont-18.0.01.otf" "$@") || return 1
-    INFO_FONT_SCALE=$(parse_arg "--info-font-scale" "80" "$@") || return 1
-
-    KEEP_WIRELESS_ENABLED=$(parse_arg "--keep-wireless-enabled" "1" "$@") || return 1
-    WIRELESS_CONNECT_TIMEOUT=$(parse_arg "--wireless-connect-timeout" "30" "$@") || return 1
-    WIRELESS_RECONNECT_COUNT=$(parse_arg "--wireless-reconnect-count" "2" "$@") || return 1
-
-    ENABLE_TIME_UPDATE=$(parse_arg "--enable-time-update" "1" "$@") || return 1
-    TIME_UPDATE_INTERVAL=$(parse_arg "--time-update-interval" "86400" "$@") || return 1
-    NTP_SERVER=$(parse_arg "--ntp-server" "pool.ntp.org" "$@") || return 1
-
-    ENABLE_WEATHER=$(parse_arg "--enable-weather-update" "1" "$@") || return 1
-    WEATHER_UPDATE_INTERVAL=$(parse_arg "--weather-update-interval" "3600" "$@") || return 1
-    WEATHER_UPDATE_TIMEOUT=$(parse_arg "--weather-update-timeout" "30" "$@") || return 1
-    WEATHER_LOCATION=$(parse_arg "--weather-location" "" "$@") || return 1
+    if ! parse_args $@; then
+        error "Failed to parse args."
+        return 1
+    fi
 
     trap 'on_exit' EXIT
 
