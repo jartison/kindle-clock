@@ -9,6 +9,8 @@ The project is currently developed and tested primarily on the Kindle 7 (WP63GW)
 ## Features
 
 - **Digital clock** — Displays the current hour and minute using a customizable font.
+- **12/24-hour format** — Supports both 12-hour and 24-hour clock formats.
+- **Display mode** — Supports light mode, dark mode, and following the Kindle system display mode.
 - **Date and weekday** — Displays the weekday and day of the month with localization support.
 - **Weather** — Retrieves current weather information from [wttr.in](https://wttr.in/).
 - **Battery status** — Displays battery level and charging status with customizable icons.
@@ -57,6 +59,8 @@ sh /mnt/us/extensions/kindle-clock/main.sh \
 | `--verbose` | `0` | Enable debug logging (`1` to enable). |
 | `--delay` | `0` | Delay before starting the main loop, in seconds. |
 | `--language` | `en` | Localization language. |
+| `--use-24-hour` | `1` | Use the 24-hour clock format (`0` to use the 12-hour format). |
+| `--display-mode` | `system` | Display mode: `light`, `dark`, or `system` to follow the Kindle system setting. |
 | `--max-cycles` | `-1` | Maximum number of display cycles. Values less than or equal to zero mean unlimited cycles. |
 | `--suspend-seconds` | `60` | Base suspend interval, in seconds. |
 | `--resume-tolerance` | `1` | Allowed early-resume tolerance, in seconds. |

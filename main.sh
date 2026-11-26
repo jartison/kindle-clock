@@ -130,6 +130,10 @@ get_is_charging() {
     lipc-get-prop com.lab126.powerd isCharging
 }
 
+get_epdc_mode() {
+    lipc-get-prop com.lab126.winmgr epdcMode
+}
+
 update_time() {
     ntpdate -s "$NTP_SERVER"
 }
@@ -329,12 +333,37 @@ fbink() {
     "$KINDLE_CLOCK_HOME/bin/fbink" "$@" >/dev/null 2>&1
 }
 
-flash_screen() {
-    fbink -w -f -s
-}
-
 refresh_screen() {
-    fbink -w -s
+    local epdc_mode
+    local flash_option
+    local nightmode_option
+
+    flash_option=""
+
+    if [ "$1" = "1" ]; then
+        flash_option="-f"
+    fi
+
+    nightmode_option=""
+
+    case "$DISPLAY_MODE" in
+        light)
+            ;;
+        dark)
+            nightmode_option="-H"
+            ;;
+        system)
+            if ! epdc_mode=$(get_epdc_mode); then
+                warning "Failed to get epdc mode."
+            elif [ "$epdc_mode" == "Y8INV" ]; then
+                    nightmode_option="-H"
+            fi
+            ;;
+    esac
+
+    # debug "flash_option=$flash_option, nightmode_option=$nightmode_option"
+
+    fbink $flash_option $nightmode_option -w -s
 }
 
 before_draw() {
@@ -345,6 +374,7 @@ draw() {
     local is_charging
     local battery_level
     local battery_image
+    local hour_format
     local hour
     local minute
     local weekday
@@ -371,8 +401,15 @@ draw() {
         warning "Failed to get battery level."
         battery_level=""
     fi
+    
+    if [ "$USE_24_HOUR" -eq 1 ]; then
+        hour_format='%H'
+    else
+        hour_format='%I'
+    fi
 
-    set -- $(TZ="$TIMEZONE" date '+%H %M %w %-d')
+    set -- $(TZ="$TIMEZONE" date "+$hour_format %M %w %-d")
+
     hour=$1
     minute=$2
     weekday=$3
@@ -532,6 +569,7 @@ suspend() {
 run() {
     local cycle
     local suspend_status
+    local flash
 
     cycle=0
 
@@ -546,14 +584,16 @@ run() {
             warning "Failed to draw."
         fi
 
-        if ! refresh_screen; then
-            warning "Failed to refresh screen."
+        if [ $((cycle % SCREEN_FLASH_INTERVAL)) -eq 0 ]; then
+            flash="1"
+        else
+            flash="0"
         fi
 
-        if [ $((cycle % SCREEN_FLASH_INTERVAL)) -eq 0 ]; then
-            if ! flash_screen; then
-                warning "Failed to flash screen."
-            fi
+        debug "Screen refreshing. Flash: $flash."
+
+        if ! refresh_screen "$flash"; then
+            warning "Failed to refresh screen."
         fi
 
         if ! after_draw; then
@@ -649,9 +689,21 @@ parse_args() {
         return 1
     fi
 
+    if ! DISPLAY_MODE=$(parse_arg "--display-mode" "system" "$@"); then
+        error "Failed to parse arg: --display-mode."
+        DISPLAY_MODE=""
+        return 1
+    fi
+
     if ! TIMEZONE=$(parse_arg "--timezone" "UTC-0" "$@"); then
         error "Failed to parse arg: --timezone."
         TIMEZONE=""
+        return 1
+    fi
+
+    if ! USE_24_HOUR=$(parse_arg "--use-24-hour" "1" "$@"); then
+        error "Failed to parse arg: --use-24-hour."
+        USE_24_HOUR=""
         return 1
     fi
 
