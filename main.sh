@@ -467,7 +467,7 @@ draw() {
     fi
 
     if ! fbink -b \
-        -t "regular=$INFO_FONT,px=$info_font_size,top=$((SCREEN_SIZE - info_font_size_max))" \
+        -t "regular=$INFO_FONT,px=$info_font_size,top=$((SCREEN_HEIGHT - info_font_size_max))" \
         -mM "$info"; then
         error "Failed to draw info."
         return 1
@@ -499,19 +499,23 @@ suspend() {
 
     # debug "Resume in $suspend_seconds seconds."
 
-    if ! echo 0 > "$RTC_WAKEALARM"; then
-        error "Failed to clear RTC alarm."
-        return 1
-    fi
+    if [ -n "$RTC_WAKEALARM" ]; then
+        if ! echo 0 > "$RTC_WAKEALARM"; then
+            error "Failed to clear RTC alarm."
+            return 1
+        fi
 
-    if ! echo "+$suspend_seconds" > "$RTC_WAKEALARM"; then
-        error "Failed to setup RTC alarm."
-        return 1
-    fi
+        if ! echo "+$suspend_seconds" > "$RTC_WAKEALARM"; then
+            error "Failed to setup RTC alarm."
+            return 1
+        fi
 
-    if ! echo mem > /sys/power/state; then
-        error "Failed to suspend memory."
-        return 1
+        if ! echo mem > /sys/power/state; then
+            error "Failed to suspend memory."
+            return 1
+        fi
+    else
+        sleep "$suspend_seconds"
     fi
 
     resume_at=$(date +%s)
@@ -815,6 +819,8 @@ parse_args() {
 }
 
 setup() {
+    local screen_size
+
     if ! TRANSLATIONS=$(get_translations); then
         error "Failed to get translations."
         TRANSLATIONS=""
@@ -828,12 +834,14 @@ setup() {
     fi
     debug "Weather language: $WEATHER_LANGUAGE"
 
-    if ! set -- $(get_screen_size); then
+    if ! screen_size=$(get_screen_size); then
         error "Failed to get screen size."
-        SCREEN_WIDTH=""
-        SCREEN_HEIGHT=""
+        screen_size=""
         return 1
     fi
+
+    set -- $screen_size
+
     SCREEN_WIDTH="$1"
     SCREEN_HEIGHT="$2"
     debug "Screen size: $SCREEN_HEIGHT * $SCREEN_WIDTH"
@@ -864,7 +872,7 @@ setup() {
         WIRELESS_ENABLE=""
         return 1
     fi
-    debug "Wireless enable: $wireless_enable"
+    debug "Wireless enable: $WIRELESS_ENABLE"
 
     TIME_UPDATE_AT=0
 
@@ -875,6 +883,13 @@ setup() {
 }
 
 on_exit() {
+    # Clear RTC wakealarm
+    if [ -n "$RTC_WAKEALARM" ]; then
+        if ! echo 0 > "$RTC_WAKEALARM"; then
+            warning "Failed to clear RTC alarm."
+        fi
+    fi
+
     # Restore prevent screenersaver
     if [ -n "$PREVENT_SCREENSAVER" ]; then
         if ! set_prevent_screensaver "$PREVENT_SCREENSAVER"; then
@@ -891,7 +906,7 @@ on_exit() {
 }
 
 main () {
-    if ! parse_args $@; then
+    if ! parse_args "$@"; then
         error "Failed to parse args."
         return 1
     fi
